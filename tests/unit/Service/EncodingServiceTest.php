@@ -68,6 +68,41 @@ class LabelServiceTest extends TestCase {
 		];
 	}
 
+	/**
+	 * @dataProvider dataSanitizeForXml
+	 */
+	public function testSanitizeForXml(string $input, string $expected) {
+		$this->assertSame($expected, $this->encodingService->sanitizeForXml($input));
+	}
+
+	public function dataSanitizeForXml(): array {
+		return [
+			'plain markdown is untouched' => ["# Title\n\nSome *text*", "# Title\n\nSome *text*"],
+			'tab, CR and LF are allowed' => ["a\tb\r\nc", "a\tb\r\nc"],
+			'multibyte characters are allowed' => ['Grüße 😀 €', 'Grüße 😀 €'],
+			'existing replacement characters are kept' => ["a\u{FFFD}b", "a\u{FFFD}b"],
+			'C0 control characters are replaced' => ["a\x00b\x10c\x16d\x1ce\x1f", "a\u{FFFD}b\u{FFFD}c\u{FFFD}d\u{FFFD}e\u{FFFD}"],
+			'vertical tab and form feed are replaced' => ["a\x0Bb\x0Cc", "a\u{FFFD}b\u{FFFD}c"],
+			'U+FFFE and U+FFFF are replaced' => ["a\u{FFFE}b\u{FFFF}c", "a\u{FFFD}b\u{FFFD}c"],
+		];
+	}
+
+	public function testSanitizeForXmlProducesWellFormedXml() {
+		// Content shaped like a Readme.md left behind by server-side encryption
+		$content = "HBEGIN:oc_encryption_module:OC_DEFAULT_MODULE:HEND\x10\x16\x1c" . implode('', array_map('chr', range(0, 255)));
+
+		$sanitized = $this->encodingService->sanitizeForXml($content);
+
+		$this->assertTrue(mb_check_encoding($sanitized, 'UTF-8'));
+		$writer = new \XMLWriter();
+		$writer->openMemory();
+		$writer->startDocument('1.0', 'UTF-8');
+		$writer->writeElement('rich-workspace', $sanitized);
+		$writer->endDocument();
+		$document = new \DOMDocument();
+		$this->assertTrue($document->loadXML($writer->outputMemory()));
+	}
+
 	private function isSupportedEncoding(string $encoding): bool {
 		return in_array($encoding, EncodingService::COMMON_ENCODINGS, true)
 			|| isset(EncodingService::UTF_BOMs[$encoding]);

@@ -13,6 +13,7 @@ use OC\Files\Node\File;
 use OCA\DAV\Connector\Sabre\Directory;
 use OCA\DAV\Files\FilesHome;
 use OCA\Text\Service\ConfigService;
+use OCA\Text\Service\EncodingService;
 use OCA\Text\Service\WorkspaceService;
 use OCP\Files\GenericFileException;
 use OCP\Files\NotPermittedException;
@@ -36,6 +37,7 @@ class WorkspacePlugin extends ServerPlugin {
 		private readonly WorkspaceService $workspaceService,
 		private readonly ICacheFactory $cacheFactory,
 		private readonly ConfigService $configService,
+		private readonly EncodingService $encodingService,
 		private readonly LoggerInterface $logger,
 		private readonly ?string $userId,
 	) {
@@ -106,11 +108,19 @@ class WorkspacePlugin extends ServerPlugin {
 				$cache = $this->cacheFactory->createDistributed('text_workspace');
 				$cacheKey = $file->getFileInfo()->getId() . '_' . $file->getFileInfo()->getEtag();
 				if (($cachedContent = $cache->get($cacheKey)) !== null) {
-					return $cachedContent;
+					return $this->encodingService->sanitizeForXml($cachedContent);
 				}
 
 				try {
-					$cachedContent = $file->getContent();
+					// Invalid characters would make the whole multistatus response malformed
+					$content = $file->getContent();
+					$cachedContent = $this->encodingService->sanitizeForXml($content);
+					if ($cachedContent !== $content) {
+						$this->logger->warning('Rich workspace file {path} is not valid UTF-8 or contains characters that are not allowed in XML, they were replaced', [
+							'path' => $file->getPath(),
+							'fileId' => $file->getId(),
+						]);
+					}
 					$cache->set($cacheKey, $cachedContent, 3600);
 				} catch (GenericFileException|NotPermittedException|LockedException $e) {
 					// Ignore but log when debugging
